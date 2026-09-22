@@ -666,6 +666,19 @@ function dashNormal(){
   renderCharts(map, totalDone+totalPending, totalDone, totalPending);
 }
 
+// Mốc thời gian tồn đọng dùng cho breakdown theo ID Trưởng trạm (tab Theo dõi tiến độ)
+const TON_BUCKETS=[
+  {key:'b1', label:'≤ 7 ngày',    min:0,  max:7},
+  {key:'b2', label:'8-10 ngày',   min:8,  max:10},
+  {key:'b3', label:'11-15 ngày',  min:11, max:15},
+  {key:'b4', label:'16-30 ngày',  min:16, max:30},
+  {key:'b5', label:'> 30 ngày',   min:31, max:99999}
+];
+function tonBucketKey(ton){
+  const b=TON_BUCKETS.find(b=>ton>=b.min && ton<=b.max);
+  return b?b.key:TON_BUCKETS[TON_BUCKETS.length-1].key;
+}
+
 function dashTienDo(){
   const label = TIENDO_LABEL[tiendoKey]||'';
   const color = TIENDO_COLOR[tiendoKey]||'';
@@ -676,12 +689,17 @@ function dashTienDo(){
   statuses.forEach(s=>byStatus[s]=0);
   view.forEach(r=>{ const st=(r['Trạng thái phiếu BH']||'').trim(); if(byStatus[st]!==undefined) byStatus[st]++; });
 
-  // Group by trưởng trạm
-  const byTram={};
+  // Group by trưởng trạm (kèm breakdown theo mốc thời gian tồn đọng)
+  const byTram={};      // tổng số phiếu / trạm (dùng cho bar chart)
+  const byTramBucket={};// breakdown theo mốc / trạm
   view.forEach(r=>{
     const id=r['ID Trưởng trạm']||'Chưa gán';
-    if(!byTram[id]) byTram[id]=0;
+    if(!byTram[id]){
+      byTram[id]=0;
+      byTramBucket[id]={b1:0,b2:0,b3:0,b4:0,b5:0};
+    }
     byTram[id]++;
+    byTramBucket[id][tonBucketKey(r._ton)]++;
   });
 
   // Summary card
@@ -693,11 +711,35 @@ function dashTienDo(){
   });
   html+='</div>';
 
-  // Per-trưởng trạm cards
-  for(let k in byTram){
-    html+=`<div class="card card-tiendo ${color}">
-      <b>${k}</b><br>
-      <span style="font-size:18px;font-weight:bold">${byTram[k]}</span> phiếu
+  // Per-trưởng trạm cards — breakdown theo mốc thời gian tồn đọng
+  const idsSorted = Object.keys(byTram).sort((a,b)=>byTram[b]-byTram[a]);
+  for(const k of idsSorted){
+    const bk = byTramBucket[k];
+    html+=`<div class="card card-tiendo ${color}" style="min-width:210px">
+      <b>${k}</b>
+      <span style="float:right;font-size:16px;font-weight:bold">${byTram[k]} phiếu</span>
+      <table style="width:100%;font-size:11.5px;margin-top:6px;border:none">
+        <tr style="border:none">
+          <td style="border:none;padding:2px 0">≤ 7 ngày</td>
+          <td style="border:none;padding:2px 0;text-align:right;font-weight:bold">${bk.b1}</td>
+        </tr>
+        <tr style="border:none">
+          <td style="border:none;padding:2px 0">8-10 ngày</td>
+          <td style="border:none;padding:2px 0;text-align:right;font-weight:bold">${bk.b2}</td>
+        </tr>
+        <tr style="border:none">
+          <td style="border:none;padding:2px 0">11-15 ngày</td>
+          <td style="border:none;padding:2px 0;text-align:right;font-weight:bold">${bk.b3}</td>
+        </tr>
+        <tr style="border:none">
+          <td style="border:none;padding:2px 0">16-30 ngày</td>
+          <td style="border:none;padding:2px 0;text-align:right;font-weight:bold">${bk.b4}</td>
+        </tr>
+        <tr style="border:none">
+          <td style="border:none;padding:2px 0;color:#b91c1c">&gt; 30 ngày</td>
+          <td style="border:none;padding:2px 0;text-align:right;font-weight:bold;color:#b91c1c">${bk.b5}</td>
+        </tr>
+      </table>
     </div>`;
   }
   document.getElementById('dash').innerHTML=html;
@@ -1241,9 +1283,10 @@ function renderLKTable(reset=false){
   show.forEach(r=>{
     const dgStyle = r.danhGia.cls ? '' : (r.danhGia.style||'');
     const xhStyle = r.xuHuong.cls ? '' : (r.xuHuong.style||'');
+    const phieuId = String(r.phieu||'').replace('PBH','');
     html += `<tr>
       <td>${esc(r.tram||'')}</td>
-      <td>${esc(r.phieu||'')}</td>
+      <td><a href="https://baohanh.mediamart.vn/Admin/Warranti/Action/${phieuId}" target="_blank">${esc(r.phieu||'')}</a></td>
       <td>${esc(r.maSP||'')}</td>
       <td>${esc(r.modelSP||'')}</td>
       <td>${esc(r.maLK||'')}</td>
