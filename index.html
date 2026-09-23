@@ -274,6 +274,7 @@ button,input,select{padding:5px;margin-right:5px}
     <table>
       <thead>
         <tr>
+          <th>Thời gian tồn</th>
           <th>ID Trưởng trạm</th>
           <th>Số Phiếu bảo hành</th>
           <th>Mã SP</th>
@@ -285,6 +286,7 @@ button,input,select{padding:5px;margin-right:5px}
           <th>Tồn LK trạm</th>
           <th>Đánh giá phiếu</th>
           <th>Xu hướng xử lý</th>
+          <th>Trạm có LK</th>
         </tr>
       </thead>
       <tbody id="lkBody"></tbody>
@@ -1148,15 +1150,24 @@ function buildLKPhieuData(){
       if(!maLk) continue;
       const tenLk = String(r[`Linh kiện ${i}`]||'').trim();
       const sl    = parseFloat(r[`SL linh kiện ${i}`]) || 0;
+      // Danh sách các trạm bảo hành hiện đang có tồn LK này (Còn lại > 0)
+      const tramMap = lkStat.tonTramMap[maLk] || {};
+      const tramCoLK = Object.keys(tramMap)
+        .filter(t=>t && tramMap[t]>0)
+        .sort((t1,t2)=>tramMap[t2]-tramMap[t1])
+        .map(t=>`${t}: ${tramMap[t]}`);
+
       lines.push({
         ma_lk: maLk, ten_lk: tenLk, sl,
         ton_tong: tonTongMap[maLk] || 0,
-        ton_tram: (lkStat.tonTramMap[maLk] || {})[tramMa] || 0
+        ton_tram: (lkStat.tonTramMap[maLk] || {})[tramMa] || 0,
+        tram_co_lk: tramCoLK
       });
     }
     if(!lines.length) continue;
 
     const dNgay = parseDate(r['Ngày KTV đề xuất LK']);
+    const dTao  = parseDate(r['Ngày tạo phiếu']);
     phieuList.push({
       ma_phieu: maPhieu,
       id_truong_tram: String(r['ID Trưởng trạm']||'').trim(),
@@ -1166,12 +1177,20 @@ function buildLKPhieuData(){
       model_sp: String(r['Model SP']||'').trim(),
       ngay_de_xuat: formatDateVN(dNgay),
       ngay_ts: dNgay ? dNgay.getTime() : 0,
+      ton: ton(dTao || dNgay),
       lines
     });
   }
 
-  // FIFO: sắp xếp phiếu theo ngày đề xuất LK cũ nhất trước, phân bổ tồn LK tổng
-  phieuList.sort((a,b)=>(a.ngay_ts||0)-(b.ngay_ts||0) || a.ma_phieu.localeCompare(b.ma_phieu));
+  // Thứ tự ưu tiên xử lý: Phân loại BHTN > BHTH > BHNB, sau đó theo thời gian tồn đọng
+  // (tồn lâu nhất được xử lý/cấp LK trước), rồi tới mã phiếu để ổn định thứ tự.
+  const PHAN_LOAI_RANK = { 'BHTN':1, 'BHTH':2, 'BHNB':3 };
+  const rankOf = pl => PHAN_LOAI_RANK[pl] || 99;
+  phieuList.sort((a,b)=>
+    rankOf(a.phan_loai)-rankOf(b.phan_loai) ||
+    (b.ton||0)-(a.ton||0) ||
+    a.ma_phieu.localeCompare(b.ma_phieu)
+  );
   const stockLeft = {...tonTongMap};
   for(const p of phieuList){
     let thieu = false;
@@ -1239,6 +1258,7 @@ function computeDoiLK(){
 
     matchLines.forEach(line=>{
       rows.push({
+        ton: p.ton,
         tram: p.id_truong_tram,
         phieu: p.ma_phieu,
         maSP: p.ma_sp,
@@ -1250,6 +1270,7 @@ function computeDoiLK(){
         tonTram: line.ton_tram,
         danhGia: dg,
         xuHuong: xh,
+        tramCoLK: (line.tram_co_lk||[]).join(', '),
         _ngayView: p.ngay_de_xuat
       });
     });
@@ -1285,6 +1306,7 @@ function renderLKTable(reset=false){
     const xhStyle = r.xuHuong.cls ? '' : (r.xuHuong.style||'');
     const phieuId = String(r.phieu||'').replace('PBH','');
     html += `<tr>
+      <td>${r.ton||0}</td>
       <td>${esc(r.tram||'')}</td>
       <td><a href="https://baohanh.mediamart.vn/Admin/Warranti/Action/${phieuId}" target="_blank">${esc(r.phieu||'')}</a></td>
       <td>${esc(r.maSP||'')}</td>
@@ -1296,6 +1318,7 @@ function renderLKTable(reset=false){
       <td>${r.tonTram}</td>
       <td class="${r.danhGia.cls}" style="${dgStyle}">${r.danhGia.text}</td>
       <td class="${r.xuHuong.cls}" style="${xhStyle}">${r.xuHuong.text}</td>
+      <td style="font-size:11.5px">${esc(r.tramCoLK||'')}</td>
     </tr>`;
   });
   document.getElementById('lkBody').insertAdjacentHTML('beforeend', html);
@@ -1342,11 +1365,11 @@ function dashLK(){
 
 function exportDoiLK(){
   if(!lkView.length){ alert('⚠ Không có dữ liệu đang lọc để export'); return; }
-  const rows = [['ID Trưởng trạm','Số Phiếu bảo hành','Mã SP','Model SP','Mã LK','Tên LK','Số lượng',
-                 'Tồn LK tổng','Tồn LK trạm','Đánh giá phiếu','Xu hướng xử lý','Ngày KTV đề xuất LK']];
+  const rows = [['Thời gian tồn','ID Trưởng trạm','Số Phiếu bảo hành','Mã SP','Model SP','Mã LK','Tên LK','Số lượng',
+                 'Tồn LK tổng','Tồn LK trạm','Đánh giá phiếu','Xu hướng xử lý','Ngày KTV đề xuất LK','Trạm có LK']];
   lkView.forEach(r=>rows.push([
-    r.tram, r.phieu, r.maSP, r.modelSP, r.maLK, r.tenLK, r.soLuong,
-    r.tonTong, r.tonTram, r.danhGia.text, r.xuHuong.text, r._ngayView
+    r.ton, r.tram, r.phieu, r.maSP, r.modelSP, r.maLK, r.tenLK, r.soLuong,
+    r.tonTong, r.tonTram, r.danhGia.text, r.xuHuong.text, r._ngayView, r.tramCoLK
   ]));
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const wb = XLSX.utils.book_new();
