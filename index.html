@@ -83,6 +83,16 @@ button,input,select{padding:5px;margin-right:5px}
 .badge-chotra{background:#dcfce7;color:#15803d;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:bold}
 .badge-chothanhtoan{background:#ede9fe;color:#7c3aed;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:bold}
 
+/* ===== MODAL CHỌN SỐ ZALO ===== */
+#zaloModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:9999;align-items:center;justify-content:center}
+#zaloModal.show{display:flex}
+#zaloModal .box{background:#fff;border-radius:8px;padding:16px;width:380px;max-width:92vw;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+#zaloModal h3{margin:0 0 10px;font-size:15px}
+#zaloModal select,#zaloModal input[type=text]{width:100%;box-sizing:border-box;margin:4px 0 8px;padding:7px;font-size:13px}
+#zaloModal .actions{text-align:right;margin-top:6px}
+#zaloModal .actions button{padding:6px 14px;margin-left:6px;cursor:pointer}
+#zaloModal .btn-ok{background:#0068ff;color:#fff;border:none;border-radius:4px}
+
 /* Card tiến độ */
 .card-tiendo{border-left:4px solid #60a5fa}
 .card-tiendo.red{border-left-color:#f87171}
@@ -173,7 +183,8 @@ button,input,select{padding:5px;margin-right:5px}
   <div>
     <button onclick="exportKPI()">Export Checklist</button>
     <button onclick="sendZalo()" style="background:#0068ff;color:#fff;border:none;border-radius:4px">📨 Send Zalo (<span id="zaloCount">0</span>)</button>
-    <button onclick="setZaloPhone()" title="Cài số Zalo nhận">⚙ Số Zalo</button>
+    <button onclick="setZaloPhone()" title="Chọn người nhận Zalo">⚙ Số Zalo</button>
+    <span id="zaloTarget" style="font-size:12px;color:#0068ff;margin-right:8px"></span>
     <button onclick="clearZaloSel()" title="Bỏ chọn tất cả">☐ Bỏ chọn</button>
     <input id="alertDay" type="number" placeholder="Cảnh báo &gt; ngày">
     <select id="truongTram"></select>
@@ -300,6 +311,22 @@ button,input,select{padding:5px;margin-right:5px}
 
 </div><!-- /content -->
 </div><!-- /container -->
+
+<!-- ===== MODAL CHỌN NGƯỜI NHẬN ZALO ===== -->
+<div id="zaloModal">
+  <div class="box">
+    <h3>⚙ Chọn người nhận Zalo</h3>
+    <select id="zaloSelect" onchange="zaloSelectChange()"></select>
+    <div id="zaloCustomWrap" style="display:none">
+      <input type="text" id="zaloCustomName" placeholder="Tên người nhận (không bắt buộc)">
+      <input type="text" id="zaloCustomPhone" placeholder="Số điện thoại (VD: 0901234567)">
+    </div>
+    <div class="actions">
+      <button onclick="zaloModalClose(false)">Hủy</button>
+      <button class="btn-ok" onclick="zaloModalClose(true)">Lưu</button>
+    </div>
+  </div>
+</div>
 
 <footer style="text-align:center;color:red;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #eee;padding:3px;font-size:11px">
   Đức (DUCSKY) © 2025
@@ -1016,15 +1043,73 @@ function zaloRefreshUI(){
   }
 }
 function getZaloPhone(){ return (cfg.zaloPhone||'').trim(); }
-function setZaloPhone(){
-  const v = prompt('Nhập số điện thoại Zalo nhận phiếu (VD: 0901234567):', getZaloPhone());
-  if(v===null) return false;
-  const p = v.replace(/[^\d+]/g,'');
-  if(p.length<9){ alert('⚠ Số điện thoại không hợp lệ'); return false; }
-  cfg.zaloPhone = p; save();
-  alert('✔ Đã lưu số Zalo nhận: '+p);
-  return true;
+// Danh sách người nhận có sẵn
+const ZALO_CONTACTS = [
+  {name:'Mr.Đức',   role:'Admin',            phone:'0367516590'},
+  {name:'Mrs.Huệ',  role:'GSV Miền Bắc',     phone:'0906261716'},
+  {name:'Mrs.Chung',role:'GSV Miền Trung',   phone:'0969729486'},
+  {name:'Mr.Tùng',  role:'Phó Phòng',        phone:'0977159312'},
+  {name:'Mrs.Anh',  role:'Phó Phòng',        phone:'0978129102'},
+  {name:'Mr.Hùng',  role:'TBP kĩ thuật',     phone:'0906322198'}
+];
+const ZALO_OTHER = '__other__';
+let zaloModalResolve = null;
+
+function zaloUpdateTargetLabel(){
+  const el = document.getElementById('zaloTarget');
+  if(!el) return;
+  const p = getZaloPhone();
+  el.innerText = p ? `→ ${cfg.zaloName ? cfg.zaloName+' – ' : ''}${p}` : '';
 }
+function zaloSelectChange(){
+  const isOther = document.getElementById('zaloSelect').value === ZALO_OTHER;
+  document.getElementById('zaloCustomWrap').style.display = isOther ? '' : 'none';
+  if(isOther) document.getElementById('zaloCustomPhone').focus();
+}
+function setZaloPhone(){
+  return new Promise(resolve=>{
+    zaloModalResolve = resolve;
+    const sel = document.getElementById('zaloSelect');
+    sel.innerHTML = ZALO_CONTACTS.map(c=>
+      `<option value="${c.phone}">${esc(c.name)} - ${esc(c.role)} - ${c.phone}</option>`).join('') +
+      `<option value="${ZALO_OTHER}">Số khác (tự điền)...</option>`;
+    const cur = getZaloPhone();
+    const known = ZALO_CONTACTS.find(c=>c.phone===cur);
+    if(known){
+      sel.value = known.phone;
+    } else if(cur){
+      sel.value = ZALO_OTHER;
+      document.getElementById('zaloCustomName').value  = cfg.zaloName || '';
+      document.getElementById('zaloCustomPhone').value = cur;
+    } else {
+      sel.value = ZALO_CONTACTS[0].phone;
+    }
+    zaloSelectChange();
+    document.getElementById('zaloModal').classList.add('show');
+  });
+}
+function zaloModalClose(ok){
+  const done = r=>{
+    document.getElementById('zaloModal').classList.remove('show');
+    const res = zaloModalResolve; zaloModalResolve = null;
+    if(res) res(r);
+  };
+  if(!ok){ done(false); return; }
+  const v = document.getElementById('zaloSelect').value;
+  let phone, name;
+  if(v === ZALO_OTHER){
+    phone = document.getElementById('zaloCustomPhone').value.replace(/[^\d+]/g,'');
+    name  = document.getElementById('zaloCustomName').value.trim();
+    if(phone.length<9){ alert('⚠ Số điện thoại không hợp lệ'); return; }
+  } else {
+    const c = ZALO_CONTACTS.find(x=>x.phone===v);
+    phone = v; name = c ? c.name : '';
+  }
+  cfg.zaloPhone = phone; cfg.zaloName = name; save();
+  zaloUpdateTargetLabel();
+  done(true);
+}
+zaloUpdateTargetLabel();
 function zaloBuildMessages(){
   // giữ thứ tự theo bảng đang hiển thị, sau đó tới các phiếu chọn từ bảng khác
   const ordered = view.map(r=>r['Mã phiếu BH']).filter(id=>zaloSel.has(id));
@@ -1049,7 +1134,7 @@ async function zaloCopy(text){
 }
 async function sendZalo(){
   if(!zaloSel.size){ alert('⚠ Chưa tích chọn phiếu nào ở cột Send Zalo'); return; }
-  if(!getZaloPhone() && !setZaloPhone()) return;
+  if(!getZaloPhone() && !(await setZaloPhone())) return;
   const msgs = zaloBuildMessages();
   const url  = 'https://zalo.me/'+getZaloPhone().replace(/^\+/,'');
   for(let i=0;i<msgs.length;i++){
