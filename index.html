@@ -172,6 +172,9 @@ button,input,select{padding:5px;margin-right:5px}
   <!-- Bộ lọc chung -->
   <div>
     <button onclick="exportKPI()">Export Checklist</button>
+    <button onclick="sendZalo()" style="background:#0068ff;color:#fff;border:none;border-radius:4px">📨 Send Zalo (<span id="zaloCount">0</span>)</button>
+    <button onclick="setZaloPhone()" title="Cài số Zalo nhận">⚙ Số Zalo</button>
+    <button onclick="clearZaloSel()" title="Bỏ chọn tất cả">☐ Bỏ chọn</button>
     <input id="alertDay" type="number" placeholder="Cảnh báo &gt; ngày">
     <select id="truongTram"></select>
     <!-- Bộ lọc chỉ hiển thị ở tab Theo dõi tiến độ -->
@@ -215,6 +218,7 @@ button,input,select{padding:5px;margin-right:5px}
         <th>ID Trưởng trạm</th>
         <th>Checklist</th>
         <th>KPI</th>
+        <th>Send Zalo<br><input type="checkbox" id="zaloAll" title="Chọn / bỏ chọn tất cả phiếu đang lọc" onchange="zaloToggleAll(this.checked)"></th>
       </tr>
     </thead>
     <tbody id="body"></tbody>
@@ -625,9 +629,11 @@ async function renderTable(reset=false){
       <td>${r['ID Trưởng trạm']||''}</td>
       <td style="font-weight:bold;color:${count>0?'green':'#999'}">${count||0}</td>
       <td style="font-weight:bold;color:${r._kpi==='OK'?'blue':'red'}">${r._kpi}</td>
+      <td style="text-align:center"><input type="checkbox" data-pbh="${esc(r['Mã phiếu BH']||'')}" ${zaloSel.has(r['Mã phiếu BH'])?'checked':''} onchange="zaloToggle(this)"></td>
     </tr>`;
   }
   document.getElementById('body').insertAdjacentHTML('beforeend',html);
+  zaloRefreshUI();
   document.getElementById('pageInfo').innerText =
     `Trang ${page}/${totalPage} — Đã tải ${Math.min(end,view.length).toLocaleString()}/${view.length.toLocaleString()} dòng`;
   const btnMore=document.querySelector('button[onclick="loadMore()"]');
@@ -969,6 +975,91 @@ function loadCache(){
       init();
     };
   };
+}
+
+// ======================================================================
+// ============  SEND ZALO  =============================================
+// ======================================================================
+// Tích chọn phiếu -> bấm "Send Zalo" -> tin nhắn (mã PBH + link) được copy
+// vào clipboard và mở sẵn khung chat Zalo của số đã cài. Zalo không cho
+// trang web tự bấm gửi, nên chỉ cần dán (Ctrl+V) rồi Enter.
+const zaloSel = new Set();            // các mã phiếu đang được chọn (giữ qua phân trang / lọc)
+const ZALO_MAX_LEN = 1800;            // giới hạn an toàn cho 1 tin nhắn Zalo
+
+function zaloToggle(cb){
+  const id = cb.dataset.pbh;
+  if(cb.checked) zaloSel.add(id); else zaloSel.delete(id);
+  zaloRefreshUI();
+}
+function zaloToggleAll(checked){
+  view.forEach(r=>{
+    const id = r['Mã phiếu BH'];
+    if(!id) return;
+    if(checked) zaloSel.add(id); else zaloSel.delete(id);
+  });
+  document.querySelectorAll('#body input[data-pbh]').forEach(cb=>cb.checked = checked);
+  zaloRefreshUI();
+}
+function clearZaloSel(){
+  zaloSel.clear();
+  document.querySelectorAll('#body input[data-pbh]').forEach(cb=>cb.checked=false);
+  zaloRefreshUI();
+}
+function zaloRefreshUI(){
+  const c = document.getElementById('zaloCount');
+  if(c) c.innerText = zaloSel.size;
+  const all = document.getElementById('zaloAll');
+  if(all){
+    const n = view.filter(r=>zaloSel.has(r['Mã phiếu BH'])).length;
+    all.checked = view.length>0 && n===view.length;
+    all.indeterminate = n>0 && n<view.length;
+  }
+}
+function getZaloPhone(){ return (cfg.zaloPhone||'').trim(); }
+function setZaloPhone(){
+  const v = prompt('Nhập số điện thoại Zalo nhận phiếu (VD: 0901234567):', getZaloPhone());
+  if(v===null) return false;
+  const p = v.replace(/[^\d+]/g,'');
+  if(p.length<9){ alert('⚠ Số điện thoại không hợp lệ'); return false; }
+  cfg.zaloPhone = p; save();
+  alert('✔ Đã lưu số Zalo nhận: '+p);
+  return true;
+}
+function zaloBuildMessages(){
+  // giữ thứ tự theo bảng đang hiển thị, sau đó tới các phiếu chọn từ bảng khác
+  const ordered = view.map(r=>r['Mã phiếu BH']).filter(id=>zaloSel.has(id));
+  zaloSel.forEach(id=>{ if(!ordered.includes(id)) ordered.push(id); });
+  const lines = ordered.map(id=>`${id}: https://baohanh.mediamart.vn/Admin/Warranti/Action/${String(id).replace('PBH','')}`);
+  const msgs=[]; let cur='';
+  lines.forEach(l=>{
+    if(cur && (cur+'\n'+l).length>ZALO_MAX_LEN){ msgs.push(cur); cur=l; }
+    else cur = cur ? cur+'\n'+l : l;
+  });
+  if(cur) msgs.push(cur);
+  return msgs.map((m,i)=>
+    (msgs.length>1?`[${i+1}/${msgs.length}] `:'')+`Danh sách phiếu BH (${ordered.length} phiếu):\n`+m);
+}
+async function zaloCopy(text){
+  try{ await navigator.clipboard.writeText(text); return true; }
+  catch(e){
+    const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta);
+    ta.select(); let ok=false; try{ ok=document.execCommand('copy'); }catch(_){}
+    ta.remove(); return ok;
+  }
+}
+async function sendZalo(){
+  if(!zaloSel.size){ alert('⚠ Chưa tích chọn phiếu nào ở cột Send Zalo'); return; }
+  if(!getZaloPhone() && !setZaloPhone()) return;
+  const msgs = zaloBuildMessages();
+  const url  = 'https://zalo.me/'+getZaloPhone().replace(/^\+/,'');
+  for(let i=0;i<msgs.length;i++){
+    const ok = await zaloCopy(msgs[i]);
+    if(!ok){ alert('⚠ Không copy được nội dung, vui lòng thử lại'); return; }
+    window.open(url,'_blank');
+    alert((msgs.length>1?`Tin ${i+1}/${msgs.length}: `:'')+
+      '✔ Đã copy nội dung và mở Zalo.\nTrong khung chat: bấm Ctrl+V rồi Enter để gửi.'+
+      (i<msgs.length-1?'\n\nBấm OK để sang tin tiếp theo.':''));
+  }
 }
 
 // ======================================================================
